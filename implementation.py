@@ -1,8 +1,9 @@
 import torch
 import torch.nn as nn
 import torchvision
-import torchvision.transforms as transforms
-from torch.utils.data import Dataset
+from torchvision import DataLoader
+from torch.utils.data import Dataset, DataLoader
+import torch.nn.functional as F
 import cv2
 import sys
 import os
@@ -49,6 +50,29 @@ class SegmentationDataset(Dataset):
         return image, mask
 
 
+class Net(nn.Module):
+    def __init__(self):
+        super(Net, self).__init__()
+        self.fc1 = nn.Linear(3 * 32 * 32, 10)
+
+    def forward(self, x):
+        x = x.view(-1, 3 * 32 * 32)
+        x = F.relu(self.fc1(x))
+        return x
+
+
+def train_u_net(train_loader):
+    net = Net()
+
+
 if __name__ == "__main__":
 
-    print(1)
+    train_dataset = SegmentationDataset()
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=BATCH_SIZE,
+        num_workers=NUM_WORKERS,
+        shuffle=True,
+    )  # pin_memory = True, not necessary unless training on Cuda GPU
+
+    train_u_net(train_loader)
