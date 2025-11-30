@@ -3,6 +3,9 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+# u-net
+u-net-release/
+
 # C extensions
 *.so
 

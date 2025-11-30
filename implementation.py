@@ -9,17 +9,29 @@ import sys
 import os
 import numpy as np
 from PIL import Image
+import glob
+import matplotlib.pyplot as plt
+from scipy import ndimage as ndi
+from torchvision import transforms as T
+from torchvision.transforms import InterpolationMode
 
 # we are working on the second segmentation task the U-net architecture tested on.
 
 # i have an nvidia GPU at home. GTX1660Ti. with i5-10600k Intel CPU. and 1 16GB Ram stick.
-# TODO: add cuda items so we can use the compute available to us for more rapid training.
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+PIN_MEMORY = DEVICE.type == "cuda"
+if DEVICE.type == "cuda":
+    torch.backends.cudnn.benchmark = (
+        True  # optimize convolution algorithms for current GPU
+    )
 
+IMAGE_ROOT = "PhC-C2DH-U373"
 NUM_WORKERS = 4
 BATCH_SIZE = 1  # batch size detailed in the paper
 FLIP_PROBABILITY = 0.5
 MOMENTUM_TERM = 0.99  # detailed in paper
 NUM_OUTPUT_CHANNELS = 2  # detailed in paper
+EPOCHS = 10
 
 # TODO: map the image with pixel-wise loss weight so it learns border images. formula 2
 # TODO: implement weight initialization as detailed in the paper
@@ -30,35 +42,87 @@ displacements are sampled from a Gaussian distribution with 10 pixels standard
 deviation. Per-pixel displacements are then computed using bicubic interpolation."""
 
 
-# online, recommended to train U-net using random crops of 256x256 for better generalization
-# at inference time can still use arbitrary image size as long as divisble by 16.
-def transforms(image, mask, crop_size=256):
-    image = F.to_tensor(image)
-    image = F.normalize(image, mean=[0.5], std=[0.5])
+def compute_class_weight_map(mask, h, w):
+    weight_class = np.zeros((h, w), dtype=np.float32)
+    labels, counts = np.unique(mask, return_counts=True)
+    freq = counts / counts.sum()  # frequency of each class
+    class_weights = 1.0 / (freq + 1e-8)  # inverse frequency
+    class_weights /= class_weights.mean()  # normalize
 
-    image = F.resize(image, size=[512, 512], interpolation=InterpolationMode.BILINEAR)
+    for label, weight in zip(labels, class_weights):
+        weight_class[mask == label] = weight  # each pixel gets weight of its class
 
-    mask = (mask > 0).astype(
-        np.uint8
-    )  # because dataset also has set-up for multi class segmentation.
-    mask = torch.tensor(
-        mask, dtype=torch.long
-    )  # convert to tensor + make correct dtype
-    # not sure why this is an error for the interpreter.
-    mask = F.resize(
-        mask.unsqueeze(0), size=[512, 512], interpolation=InterpolationMode.NEAREST
-    ).squeeze(0)  # expects 3 channels, then put back to 2-d dimensions
-    i, j, h, w = F.get_params(image, output_size=(crop_size, crop_size))
-    image = F.crop(image, i, j, h, w)
-    mask = F.crop(mask, i, j, h, w)
+    return weight_class
+
+
+def compute_unet_weight_map(mask, cache_path=None, w0=10.0, sigma=5.0):
+    if cache_path is not None and os.path.exists(cache_path):
+        return np.load(cache_path)
+    h, w = mask.shape
+
+    weight_class = compute_class_weight_map(
+        mask, h, w
+    )  # inverse frequency weights over entire mask
+    cell_ids = [
+        cid for cid in np.unique(mask) if cid != 0
+    ]  # collect all non-zero cell ids
+    if len(cell_ids) < 2:
+        return weight_class.astype(np.float32)
+
+    # distance to each cell i (label)
+    distance_maps = []
+    for cid in cell_ids:
+        cell_mask = mask == cid  # mask
+        # distance of each pixel to specific cell, if the pixel is NOT in the cell
+        distance = ndi.distance_transform_edt(~cell_mask)
+        # array of distances to each cell
+        distance_maps.append(distance)
+
+    # each index, coordinate y, coordinate x id stance from a specific pixel to cell (index)
+    distance_maps = np.stack(distance_maps, axis=0)
+
+    # get nearest and second nearest cell border for d1 and d2 as defined in u-net formula.
+    dist_sorted = np.sort(distance_maps, axis=0)
+    d1 = dist_sorted[0]
+    d2 = dist_sorted[1]
+
+    # calculate border weight term
+    border = w0 * np.exp(-((d1 + d2) ** 2) / (2 * (sigma**2)))
+
+    # weight map with border weight term applied
+    w_map = weight_class + border
+    if cache_path is not None:
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        np.save(cache_path, w_map)
+    return w_map.astype(np.float32)  # final weight map
+
+
+def transforms(image, mask, crop_size=572):
+    image = T.to_tensor(image)  # 696 x 520
+    weight_mask = T.to_tensor(dtype=torch.long)
+    mask = (weight_mask > 0).astype(np.uint8)
+
+    pad_h = max(0, crop_size - image.shape[1])
+    # pad_w = max(0, crop_size - image.shape[2])
+
+    padding = (0, 0, pad_h // 2, pad_h - (pad_h // 2))
+    image = T.pad(image, padding, padding_mode="reflect")
+    mask = T.pad(mask.unsqueeze(0), padding, fill=0, padding_mode="constant").squeeze(0)
+
+    i, j, h, w = T.get_params(image, output_size=(crop_size, crop_size))
+    image = T.crop(image, i, j, h, w)
+    mask = T.crop(mask, i, j, h, w)
 
     if torch.rand(1) > 0.5:
-        image = F.hflip(image)
-        mask = F.hflip(mask)
+        image = T.hflip(image)
+        mask = T.hflip(mask)
 
     if torch.rand(1) > 0.5:
-        image = F.vflip(image)
-        mask = F.vflip(mask)
+        image = T.vflip(image)
+        mask = T.vflip(mask)
+
+    image = T.normalize(image, mean=[0.5], std=[0.5])
+
     return image, mask
 
 
@@ -67,6 +131,7 @@ class SegmentationDataset(Dataset):
         self.image_root = image_root
         self.mask_paths = mask_paths
         self.transforms = transforms
+        self.weight_map_cache = {}
 
     def __len__(self):
         return len(self.mask_paths)
@@ -77,8 +142,8 @@ class SegmentationDataset(Dataset):
             image_folder = "01"
         else:
             image_folder = "02"
-        mask = np.array(Image.open(label_path))
-        mask = (mask > 0).astype(np.uint8)  # binary segmentation
+        weight_mask = np.array(Image.open(label_path))
+        mask = (weight_mask > 0).astype(np.uint8)  # binary segmentation
 
         label_filename = os.path.basename(label_path)
         base = label_filename.split(".")[0]
@@ -91,7 +156,16 @@ class SegmentationDataset(Dataset):
         if self.transforms:
             image, mask = self.transforms(image, mask)
 
-        return image, mask
+        weight_map_cache = os.path.splitext(label_path)[0] + "_weight_map.npy"
+        if label_path in self.weight_map_cache:
+            weight_map = self.weight_map_cache[label_path]
+        else:
+            weight_map = compute_unet_weight_map(
+                weight_mask, cache_path=weight_map_cache
+            )
+            self.weight_map_cache[label_path] = weight_map
+
+        return image, mask, weight_map
 
 
 class Net(nn.Module):
@@ -128,6 +202,8 @@ class Net(nn.Module):
         self.conv10 = nn.Conv2d(
             in_channels=1024, out_channels=1024, kernel_size=3, stride=1, padding=0
         )
+
+        self.dropout = nn.Dropout(p=0.5)
 
         # up convolution
         self.up1 = nn.ConvTranspose2d(
@@ -178,6 +254,15 @@ class Net(nn.Module):
             padding=0,
         )
 
+        self._initialize_weights()
+
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+                nn.init.xavier_normal_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+
     def forward(self, x):
         # TODO: implement model
         x = F.relu(self.conv1(x))
@@ -195,15 +280,17 @@ class Net(nn.Module):
         x = F.relu(self.conv7(x))
         x = F.relu(self.conv8(x))
         skip4 = x
+        x = self.dropout(x)
         x = self.pool(x)
         x = F.relu(self.conv9(x))
         x = F.relu(self.conv10(x))
+        x = self.dropout(x)
         # end of down sampling
 
         # up sampling 1
         x = self.up1(x)
         _, _, H, W = x.shape
-        skip4_cropped = torchvision.transforms.CenterCrop([H, W])(skip4)
+        skip4_cropped = F.center_crop(skip4, [H, W])
         x = torch.cat([x, skip4_cropped], dim=1)
         x = F.relu(self.conv11(x))
         x = F.relu(self.conv12(x))
@@ -211,7 +298,7 @@ class Net(nn.Module):
         # up sampling 2
         x = self.up2(x)
         _, _, H, W = x.shape
-        skip3_cropped = torchvision.transforms.CenterCrop([H, W])(skip3)
+        skip3_cropped = F.center_crop(skip3, [H, W])
         x = torch.cat([x, skip3_cropped], dim=1)
         x = F.relu(self.conv13(x))
         x = F.relu(self.conv14(x))
@@ -219,7 +306,7 @@ class Net(nn.Module):
         # up sampling 3
         x = self.up3(x)
         _, _, H, W = x.shape
-        skip2_cropped = torchvision.transforms.CenterCrop([H, W])(skip2)
+        skip2_cropped = F.center_crop(skip2, [H, W])
         x = torch.cat([x, skip2_cropped], dim=1)
         x = F.relu(self.conv15(x))
         x = F.relu(self.conv16(x))
@@ -227,7 +314,7 @@ class Net(nn.Module):
         # up sampling 4
         x = self.up4(x)
         _, _, H, W = x.shape
-        skip1_cropped = torchvision.transforms.CenterCrop([H, W])(skip1)
+        skip1_cropped = F.center_crop(skip1, [H, W])
         x = torch.cat([x, skip1_cropped], dim=1)
         x = F.relu(self.conv17(x))
         x = F.relu(self.conv18(x))
@@ -237,26 +324,222 @@ class Net(nn.Module):
         return x  # logits
 
 
-# TODO: define train loop
-def train_u_net(train_loader):
-    net = Net()
+def train_u_net(train_loader, val_loader=None):
+    net = Net().to(DEVICE)
+
+    criterion = nn.CrossEntropyLoss()
+    weights = [p for name, p in net.named_parameters() if "weight" in name]
+    biases = [p for name, p in net.named_parameters() if "bias" in name]
+
+    optimizer = torch.optim.SGD(
+        [
+            {
+                "params": weights,
+                "weight_decay": 0.0005,
+            },  # Apply weight decay to weights
+            {"params": biases, "weight_decay": 0},  # No weight decay for biases
+        ],
+        lr=0.01,
+        momentum=0.99,
+    )
+
+    best_val_dice = -1.0
+    best_epoch = -1
+    best_model_path = "best_model.pth"
+
+    history = {
+        "train_loss": [],
+        "val_loss": [],
+        "train_dice": [],
+        "val_dice": [],
+        "train_iou": [],
+        "val_iou": [],
+        "train_pixel_acc": [],
+        "val_pixel_acc": [],
+    }
+
+    for epoch in range(EPOCHS):
+        net.train()
+        running_loss = 0.0
+        running_dice = 0.0
+        running_iou = 0.0
+        running_pixel_acc = 0.0
+        for images, masks, weight_maps in train_loader:
+            images = images.to(DEVICE, non_blocking=True)
+            masks = masks.to(DEVICE, non_blocking=True)
+            if torch.is_tensor(weight_maps):
+                weight_maps = weight_maps.to(DEVICE, non_blocking=True)
+            optimizer.zero_grad()
+            outputs = net(images)
+            loss = criterion(outputs, masks)
+            loss.backward()
+            optimizer.step()
+
+            running_loss += loss.item()
+            running_dice += dice_score(outputs.detach(), masks)
+            running_iou += IoU_score(outputs.detach(), masks)
+            running_pixel_acc += pixel_accuracy(outputs.detach(), masks)
+
+        train_loss = running_loss / max(len(train_loader), 1)
+        train_dice = running_dice / max(len(train_loader), 1)
+        train_iou = running_iou / max(len(train_loader), 1)
+        train_pixel_acc = running_pixel_acc / max(len(train_loader), 1)
+
+        val_loss = None
+        val_dice = None
+        val_iou = None
+        val_pixel_acc = None
+        if val_loader is not None:
+            net.eval()
+            v_loss = 0.0
+            v_dice = 0.0
+            v_iou = 0.0
+            v_pixel_acc = 0.0
+            with torch.no_grad():
+                for images, masks, weight_maps in val_loader:
+                    images = images.to(DEVICE, non_blocking=True)
+                    masks = masks.to(DEVICE, non_blocking=True)
+                    if torch.is_tensor(weight_maps):
+                        weight_maps = weight_maps.to(DEVICE, non_blocking=True)
+                    outputs = net(images)
+                    loss = criterion(outputs, masks)
+                    v_loss += loss.item()
+                    v_dice += dice_score(outputs, masks)
+                    v_iou += IoU_score(outputs, masks)
+                    v_pixel_acc += pixel_accuracy(outputs, masks)
+            val_loss = v_loss / max(len(val_loader), 1)
+            val_dice = v_dice / max(len(val_loader), 1)
+            val_iou = v_iou / max(len(val_loader), 1)
+            val_pixel_acc = v_pixel_acc / max(len(val_loader), 1)
+
+            if val_dice > best_val_dice:
+                best_val_dice = val_dice
+                best_epoch = epoch
+                torch.save(net.state_dict(), best_model_path)
+
+        history["train_loss"].append(train_loss)
+        history["train_dice"].append(train_dice)
+        history["train_iou"].append(train_iou)
+        history["train_pixel_acc"].append(train_pixel_acc)
+        history["val_loss"].append(val_loss)
+        history["val_dice"].append(val_dice)
+        history["val_iou"].append(val_iou)
+        history["val_pixel_acc"].append(val_pixel_acc)
+
+        print(
+            f"Epoch {epoch+1}/{EPOCHS} | "
+            f"train_loss={train_loss:.4f} train_dice={train_dice:.4f} "
+            f"train_iou={train_iou:.4f} train_pixacc={train_pixel_acc:.4f}"
+            + (
+                f" | val_loss={val_loss:.4f} val_dice={val_dice:.4f} "
+                f"val_iou={val_iou:.4f} val_pixacc={val_pixel_acc:.4f}"
+                if val_loader is not None
+                else ""
+            )
+        )
+
+    if best_epoch >= 0:
+        print(f"Best val_dice={best_val_dice:.4f} at epoch {best_epoch+1}")
+        print(f"Saved best model to {best_model_path}")
+    plot_history(history)
 
 
-# TODO: implement loss function
-def loss_func(net):
-    nn.CrossEntropyLoss()
+def dice_score(pred, target, epsilon=1e-6):
+    pred = pred.argmax(dim=1)  # get predicted class
+    pred = pred.float()
+    target = target.float()
+
+    intersection = (pred * target).sum()
+    union = pred.sum() + target.sum()
+
+    dice = (2.0 * intersection + epsilon) / (union + epsilon)
+    return dice.item()
+
+
+def IoU_score(pred, target, epsilon=1e-6):
+    pred = pred.argmax(dim=1)  # get predicted class
+    pred = pred.float()
+    target = target.float()
+
+    intersection = (pred * target).sum()
+    union = pred.sum() + target.sum()
+
+    iou = (intersection + epsilon) / (union + epsilon)
+    return iou.item()
+
+
+def pixel_accuracy(pred, target, epsilon=1e-6):
+    pred = pred.argmax(dim=1)  # get predicted class
+    pred = pred.float()
+    target = target.float()
+
+    intersection = (pred * target).sum()
+    union = pred.sum() + target.sum()
+
+    pixel_accuracy = (intersection + epsilon) / (union + epsilon)
+    return pixel_accuracy.item()
+
+
+def plot_history(history, out_dir="plots"):
+    os.makedirs(out_dir, exist_ok=True)
+
+    def plot_pair(metric, ylabel):
+        plt.figure()
+        train_vals = history.get(f"train_{metric}", [])
+        val_vals = history.get(f"val_{metric}", [])
+        epochs = range(1, len(train_vals) + 1)
+        plt.plot(epochs, train_vals, label="train")
+        if val_vals and val_vals[0] is not None:
+            plt.plot(epochs, val_vals, label="val")
+        plt.xlabel("Epoch")
+        plt.ylabel(ylabel)
+        plt.title(f"{metric} over epochs")
+        plt.legend()
+        plt.grid(True, linestyle="--", alpha=0.4)
+        out_path = os.path.join(out_dir, f"{metric}.png")
+        plt.savefig(out_path, bbox_inches="tight")
+        plt.close()
+
+    plot_pair("loss", "Loss")
+    plot_pair("dice", "Dice")
+    plot_pair("iou", "IoU")
+    plot_pair("pixel_acc", "Pixel Accuracy")
 
 
 if __name__ == "__main__":
-    train_dataset = SegmentationDataset()
+    mask_pattern = os.path.join(IMAGE_ROOT, "*_GT", "SEG", "man_seg*.tif")
+    mask_paths = sorted(glob.glob(mask_pattern))
+
+    rng = np.random.default_rng(seed=42)
+    shuffled = mask_paths.copy()
+    rng.shuffle(shuffled)
+    split_idx = max(1, int(0.2 * len(shuffled)))
+    val_mask_paths = shuffled[:split_idx]
+    train_mask_paths = shuffled[split_idx:]
+
+    train_dataset = SegmentationDataset(
+        image_root=IMAGE_ROOT,
+        mask_paths=train_mask_paths,
+        transforms=transforms,
+    )
+    val_dataset = SegmentationDataset(
+        image_root=IMAGE_ROOT,
+        mask_paths=val_mask_paths,
+        transforms=transforms,
+    )
     train_loader = DataLoader(
         train_dataset,
         batch_size=BATCH_SIZE,
         num_workers=NUM_WORKERS,
         shuffle=True,
-    )  # pin_memory = True, not necessary unless training on Cuda GPU
+        pin_memory=PIN_MEMORY,
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=BATCH_SIZE,
+        num_workers=NUM_WORKERS,
+        shuffle=False,
+        pin_memory=PIN_MEMORY,
+    )
 
-    train_u_net(train_loader)
-
-    # TODO: create evaluations to see how the model does in training and then test.
-    # Testing accuracy: Dice, IoU, Pixel accuracy
+    train_u_net(train_loader, val_loader)
