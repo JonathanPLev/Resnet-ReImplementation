@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 
 from config import PLOT_DIR, RUN_DETAIL
 
+
 def dice_score(pred, target, epsilon=1e-6):
     pred = pred.argmax(dim=1)
     pred = pred.float()

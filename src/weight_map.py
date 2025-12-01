@@ -3,6 +3,7 @@ from scipy import ndimage as ndi
 import os
 import config
 
+
 def compute_class_weight_map(mask, h, w):
     weight_class = np.zeros((h, w), dtype=np.float32)
     labels, counts = np.unique(mask, return_counts=True)
@@ -15,7 +16,10 @@ def compute_class_weight_map(mask, h, w):
 
     return weight_class
 
-def compute_unet_weight_map(mask, cache_path=None, w0=config.WEIGHT_MAP_W0, sigma=config.WEIGHT_MAP_SIGMA):
+
+def compute_unet_weight_map(
+    mask, cache_path=None, w0=config.WEIGHT_MAP_W0, sigma=config.WEIGHT_MAP_SIGMA
+):
     if cache_path is not None and os.path.exists(cache_path):
         return np.load(cache_path)
     h, w = mask.shape

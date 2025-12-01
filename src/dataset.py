@@ -17,6 +17,7 @@ from config import (
 )
 from weight_map import compute_unet_weight_map
 
+
 def transforms(image, instance_mask, weight_map=None, crop_size=CROP_SIZE):
     image = TF.to_tensor(image)  # (C,H,W)
     instance_mask = torch.as_tensor(instance_mask, dtype=torch.long)
@@ -63,7 +64,11 @@ def transforms(image, instance_mask, weight_map=None, crop_size=CROP_SIZE):
             [img_np, inst_np, weight_np],
             sigma=DEFORM_SIGMA,
             points=DEFORM_POINTS,
-            order=[3, 0, 1],  # bicubic for image, nearest for mask, bilinear for weights
+            order=[
+                3,
+                0,
+                1,
+            ],  # bicubic for image, nearest for mask, bilinear for weights
             mode=["reflect", "constant", "reflect"],
             axis=[(1, 2), (0, 1), (0, 1)],
         )
@@ -77,9 +82,10 @@ def transforms(image, instance_mask, weight_map=None, crop_size=CROP_SIZE):
     return image, mask, weight_map
 
 
-
 class SegmentationDataset(Dataset):
-    def __init__(self, image_root, mask_paths, transforms, weight_cache_dir=WEIGHT_MAP_CACHE_DIR):
+    def __init__(
+        self, image_root, mask_paths, transforms, weight_cache_dir=WEIGHT_MAP_CACHE_DIR
+    ):
         self.image_root = image_root
         self.mask_paths = mask_paths
         self.transforms = transforms

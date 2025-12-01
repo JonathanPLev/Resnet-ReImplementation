@@ -15,6 +15,7 @@ from config import (
 from model import Net
 from utils import IoU_score, dice_score, pixel_accuracy, plot_history
 
+
 def train_u_net(train_loader, val_loader=None):
     net = Net().to(DEVICE)
 
