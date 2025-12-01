@@ -3,7 +3,6 @@ import torch.nn as nn
 import torchvision
 from torch.utils.data import Dataset, DataLoader
 import torch.nn.functional as F
-import cv2
 import sys
 import os
 import numpy as np
@@ -104,8 +103,15 @@ def transforms(image, mask, weight_mask, crop_size=572):
     mask = torch.as_tensor(mask, dtype=torch.long)
     weight_mask = torch.as_tensor(weight_mask, dtype=torch.long)
 
+    pad_w = max(0, crop_size - image.shape[2])
     pad_h = max(0, crop_size - image.shape[1])
-    padding = (0, 0, pad_h // 2, pad_h - (pad_h // 2))
+    padding = (
+        pad_w // 2,
+        pad_h // 2,
+        pad_w - pad_w // 2,
+        pad_h - pad_h // 2,
+    )
+    print(f"Image shape: {image.shape}, pad_w: {pad_w}, pad_h: {pad_h}")
     image = TF.pad(image, padding, padding_mode="reflect")
     mask = TF.pad(mask.unsqueeze(0), padding, fill=0, padding_mode="constant").squeeze(
         0
