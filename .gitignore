@@ -1,5 +1,6 @@
 # u-net
 weight_cache/
+u-net-release/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

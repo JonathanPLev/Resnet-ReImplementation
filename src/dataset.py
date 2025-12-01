@@ -1,10 +1,21 @@
+import os
+
+import numpy as np
 import torch
-import torchvision.transforms as TF
+import torchvision.transforms as T
 import torchvision.transforms.functional as TF
-import torch.nn.functional as F
+from PIL import Image
+from torch.utils.data import Dataset
 from elasticdeform import deform_random_grid
+
+from config import (
+    CROP_SIZE,
+    DEFORM_POINTS,
+    DEFORM_SIGMA,
+    FLIP_PROBABILITY,
+    WEIGHT_MAP_CACHE_DIR,
+)
 from weight_map import compute_unet_weight_map
-from config import *
 
 def transforms(image, instance_mask, weight_map=None, crop_size=CROP_SIZE):
     image = TF.to_tensor(image)  # (C,H,W)
@@ -29,7 +40,7 @@ def transforms(image, instance_mask, weight_map=None, crop_size=CROP_SIZE):
         weight_map.unsqueeze(0), padding, fill=0, padding_mode="constant"
     ).squeeze(0)
 
-    i, j, h, w = TF.RandomCrop.get_params(image, output_size=(crop_size, crop_size))
+    i, j, h, w = T.RandomCrop.get_params(image, output_size=(crop_size, crop_size))
     image = TF.crop(image, i, j, h, w)
     instance_mask = TF.crop(instance_mask.unsqueeze(0), i, j, h, w).squeeze(0)
     weight_map = TF.crop(weight_map.unsqueeze(0), i, j, h, w).squeeze(0)

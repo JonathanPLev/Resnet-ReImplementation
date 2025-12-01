@@ -1,7 +1,9 @@
-import torch
 import os
+
 import matplotlib.pyplot as plt
-from config import *
+
+from config import PLOT_DIR, RUN_DETAIL
+
 def dice_score(pred, target, epsilon=1e-6):
     pred = pred.argmax(dim=1)
     pred = pred.float()
@@ -30,7 +32,7 @@ def pixel_accuracy(pred, target):
     return correct.mean().item()
 
 
-def plot_history(history, out_dir=PLOT_DIR):    
+def plot_history(history, out_dir=PLOT_DIR):
     os.makedirs(out_dir, exist_ok=True)
 
     def plot_pair(metric, ylabel):

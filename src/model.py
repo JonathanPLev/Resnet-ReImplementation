@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.transforms.functional as TF
+from config import NUM_OUTPUT_CHANNELS
 
 class Net(nn.Module):
     def __init__(self):

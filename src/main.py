@@ -1,32 +1,23 @@
-import torch
-import torch.nn as nn
-import torchvision
-from torch.utils.data import Dataset, DataLoader
-import torch.nn.functional as F
-import sys
-import os
-import numpy as np
-from PIL import Image
 import glob
-import matplotlib.pyplot as plt
-from scipy import ndimage as ndi
-from torchvision import transforms as T
-from torchvision.transforms import InterpolationMode
-import torchvision.transforms.functional as TF
-from elasticdeform import deform_random_grid
-from config import *
+import os
+
+import numpy as np
+import torch
+from torch.utils.data import DataLoader
+
+from config import BATCH_SIZE, DEVICE, IMAGE_ROOT, NUM_WORKERS, PIN_MEMORY
+from dataset import SegmentationDataset, transforms as dataset_transforms
+from train import train_u_net
 
 # we are implementing the original U-net architecture for the PhC-C2DH-U373 dataset segmentation task.
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-PIN_MEMORY = DEVICE.type == "cuda"
 if DEVICE.type == "cuda":
     torch.backends.cudnn.benchmark = True
     print("Using GPU: ", torch.cuda.get_device_name(0))
 
 
 if __name__ == "__main__":
-    mask_pattern = os.path.join(IMAGE_ROOT, "*_GT", "SEG", "man_seg*.tif")
+    mask_pattern = os.path.join(str(IMAGE_ROOT), "*_GT", "SEG", "man_seg*.tif")
     mask_paths = sorted(glob.glob(mask_pattern))
 
     rng = np.random.default_rng(seed=42)
@@ -37,14 +28,14 @@ if __name__ == "__main__":
     train_mask_paths = shuffled[split_idx:]
 
     train_dataset = SegmentationDataset(
-        image_root=IMAGE_ROOT,
+        image_root=str(IMAGE_ROOT),
         mask_paths=train_mask_paths,
-        transforms=transforms,
+        transforms=dataset_transforms,
     )
     val_dataset = SegmentationDataset(
-        image_root=IMAGE_ROOT,
+        image_root=str(IMAGE_ROOT),
         mask_paths=val_mask_paths,
-        transforms=transforms,
+        transforms=dataset_transforms,
     )
     train_loader = DataLoader(
         train_dataset,

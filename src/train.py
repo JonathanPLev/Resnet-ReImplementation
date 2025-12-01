@@ -1,11 +1,19 @@
+import os
 
 import torch
 import torch.nn as nn
 import torchvision.transforms.functional as TF
-from config import *
+
+from config import (
+    DEVICE,
+    EPOCHS,
+    LEARNING_RATE,
+    MODEL_SAVE_PATH,
+    MOMENTUM_TERM,
+    RUN_DETAIL,
+)
 from model import Net
-from utils import dice_score, IoU_score, pixel_accuracy, plot_history
-import os
+from utils import IoU_score, dice_score, pixel_accuracy, plot_history
 
 def train_u_net(train_loader, val_loader=None):
     net = Net().to(DEVICE)
