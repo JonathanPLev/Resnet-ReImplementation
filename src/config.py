@@ -5,10 +5,15 @@ import torch
 # paths
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent
-IMAGE_ROOT = PROJECT_ROOT / "PhC-C2DH-U373"
+PHC_IMAGE_ROOT = PROJECT_ROOT / "PhC-C2DH-U373"
+DSB2018_TRAIN_ROOT = PROJECT_ROOT / "data-science-bowl-2018" / "stage1_train"
 PLOT_DIR = PROJECT_ROOT / "plots"
 MODEL_SAVE_PATH = PROJECT_ROOT / "checkpoints"
 WEIGHT_MAP_CACHE_DIR = PROJECT_ROOT / "weight_cache"
+
+# dataset selection
+# options: "phc-u373" (default), "data-science-bowl-2018"
+DATASET_CHOICE = "phc-u373"
 
 # run save tag
 RUN_DETAIL = "original_implementation"
