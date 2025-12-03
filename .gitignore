@@ -5,6 +5,7 @@ checkpoints/
 plots/
 orig_impl_weight_cache/
 orig_impl_checkpoints/
+data-science-bowl-2018/
 
 # Mac
 .DS_Store
