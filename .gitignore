@@ -3,6 +3,8 @@ weight_cache/
 u-net-release/
 checkpoints/
 plots/
+orig_impl_weight_cache/
+orig_impl_checkpoints/
 
 # Mac
 .DS_Store
