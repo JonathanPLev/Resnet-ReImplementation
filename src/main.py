@@ -11,6 +11,7 @@ from config import (
     DATASET_CHOICE,
     DEVICE,
     DSB2018_TRAIN_ROOT,
+    DSB_MAX_MASKS_PER_IMAGE,
     NUM_WORKERS,
     PHC_IMAGE_ROOT,
     PIN_MEMORY,
@@ -70,6 +71,7 @@ def build_phc_loaders():
 def build_dsb_loaders():
     train_root = Path(DSB2018_TRAIN_ROOT)
     samples = []
+    rng = np.random.default_rng(seed=42)
     for image_dir in train_root.iterdir():
         if not image_dir.is_dir():
             continue
@@ -81,7 +83,10 @@ def build_dsb_loaders():
         if not image_files:
             continue
         image_path = image_files[0]
-        for mask_path in sorted(masks_dir.glob("*.png")):
+        mask_paths = sorted(masks_dir.glob("*.png"))
+        if DSB_MAX_MASKS_PER_IMAGE is not None and len(mask_paths) > DSB_MAX_MASKS_PER_IMAGE:
+            mask_paths = rng.choice(mask_paths, size=DSB_MAX_MASKS_PER_IMAGE, replace=False)
+        for mask_path in mask_paths:
             samples.append((image_path, mask_path))
 
     if not samples:
@@ -90,7 +95,6 @@ def build_dsb_loaders():
             "Ensure the Kaggle stage1_train directory is extracted there."
         )
 
-    rng = np.random.default_rng(seed=42)
     rng.shuffle(samples)
     split_idx = max(1, int(0.2 * len(samples)))
     val_samples = samples[:split_idx]

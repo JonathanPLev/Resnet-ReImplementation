@@ -20,13 +20,16 @@ PLOT_DIR = (
     else PLOT_DIR_BASE / "2018_train"
 )
 PLOT_PREFIX = "phc-u373" if DATASET_CHOICE == "phc-u373" else "dsb2018"
+# Data Science Bowl sampling
+# None = use all masks; set an int to cap masks per image to reduce epoch size
+DSB_MAX_MASKS_PER_IMAGE = None
 
 # run save tag
 RUN_DETAIL = "original_implementation"
 
 # data loading
 NUM_WORKERS = 12
-BATCH_SIZE = 1  # batch size detailed in the paper
+BATCH_SIZE = 8  # adjust based on GPU memory; 8 works on H100 and 4070Ti with 572 crops
 CROP_SIZE = 572
 
 # augmentation
