@@ -71,35 +71,43 @@ def build_phc_loaders():
 def build_dsb_loaders():
     train_root = Path(DSB2018_TRAIN_ROOT)
     samples = []
-    rng = np.random.default_rng(seed=42)
+
+    # Each sample should correspond to 1 image folder
     for image_dir in train_root.iterdir():
         if not image_dir.is_dir():
             continue
+        
         images_dir = image_dir / "images"
         masks_dir = image_dir / "masks"
+
         if not images_dir.exists() or not masks_dir.exists():
             continue
+
+        # find the single image file
         image_files = list(images_dir.glob("*.png"))
-        if not image_files:
+        if len(image_files) == 0:
             continue
+
         image_path = image_files[0]
-        mask_paths = sorted(masks_dir.glob("*.png"))
-        if DSB_MAX_MASKS_PER_IMAGE is not None and len(mask_paths) > DSB_MAX_MASKS_PER_IMAGE:
-            mask_paths = rng.choice(mask_paths, size=DSB_MAX_MASKS_PER_IMAGE, replace=False)
-        for mask_path in mask_paths:
-            samples.append((image_path, mask_path))
+
+        # append ONE sample per image folder
+        samples.append((image_path, masks_dir))
 
     if not samples:
         raise FileNotFoundError(
-            f"No training folders found under {train_root}. "
-            "Ensure the Kaggle stage1_train directory is extracted there."
+            f"No valid training folders found under {train_root}. "
+            "Ensure stage1_train is correctly extracted."
         )
 
+    # shuffle + split
+    rng = np.random.default_rng(seed=42)
     rng.shuffle(samples)
     split_idx = max(1, int(0.2 * len(samples)))
+
     val_samples = samples[:split_idx]
     train_samples = samples[split_idx:]
 
+    # dataset uses mask_dir, NOT individual mask paths
     train_dataset = DataScienceBowlDataset(
         samples=train_samples,
         transforms=dataset_transforms,
@@ -108,6 +116,7 @@ def build_dsb_loaders():
         samples=val_samples,
         transforms=dataset_transforms,
     )
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=BATCH_SIZE,
@@ -122,8 +131,8 @@ def build_dsb_loaders():
         shuffle=False,
         pin_memory=PIN_MEMORY,
     )
-    return train_loader, val_loader
 
+    return train_loader, val_loader
 
 def run_phc_training():
     train_loader, val_loader = build_phc_loaders()
