@@ -77,8 +77,8 @@ def transforms(image, instance_mask, weight_map=None, crop_size=CROP_SIZE):
     #     instance_mask = torch.from_numpy(inst_def).long()
     #     weight_map = torch.from_numpy(weight_def).float()
 
-    # image = TF.normalize(image, mean=[0.5], std=[0.5])
-    # mask = (instance_mask > 0).long()
+    image = TF.normalize(image, mean=[0.5], std=[0.5])
+    mask = (instance_mask > 0).long()
 
     return image, mask, weight_map
 
@@ -125,17 +125,35 @@ class SegmentationDataset(Dataset):
         return image, mask, weight_map
 
 
+# This produces a single label image where each nucleus is a different ID.
+def build_instance_mask(masks_dir: Path):
+    masks = sorted(masks_dir.glob("*.png"))
+    if len(masks) == 0:
+        raise ValueError(f"No mask files in {masks_dir}")
+
+    first = np.array(Image.open(masks[0]).convert("L"))
+    H, W = first.shape
+    instance_mask = np.zeros((H, W), dtype=np.uint16)
+
+    current_id = 1
+
+    for mp in masks:
+        mask = np.array(Image.open(mp).convert("L"))
+        binary = (mask > 0)
+
+        # Assign unique ID wherever mask is positive
+        instance_mask[binary] = current_id
+        current_id += 1
+
+    return instance_mask
+
 class DataScienceBowlDataset(Dataset):
     """
-    Dataset for the Data Science Bowl 2018 nuclei segmentation task.
-    Each item corresponds to a single nucleus mask file paired with its image.
-    Expects root/<image_id>/images/<image_id>.png and root/<image_id>/masks/*.png
+    samples: list of (image_path, masks_dir)
     """
 
-    def __init__(
-        self, samples, transforms, weight_cache_dir=WEIGHT_MAP_CACHE_DIR
-    ):
-        self.samples = samples  # list of (image_path, mask_path)
+    def __init__(self, samples, transforms, weight_cache_dir=WEIGHT_MAP_CACHE_DIR):
+        self.samples = samples
         self.transforms = transforms
         self.weight_cache_dir = Path(weight_cache_dir) / "dsb2018"
 
@@ -143,20 +161,27 @@ class DataScienceBowlDataset(Dataset):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        image_path, mask_path = self.samples[idx]
+        image_path, masks_dir = self.samples[idx]
+
+        # Load image
         image = np.array(Image.open(image_path).convert("L"))
-        mask = np.array(Image.open(mask_path))
-        if mask.ndim == 3:
-            mask = mask[:, :, 0]
-        binary_mask = (mask > 0).astype(np.uint8)
 
-        cache_rel = Path(mask_path).relative_to(Path(image_path).parents[1])
-        cache_path = self.weight_cache_dir / cache_rel.with_suffix(".npy")
-        weight_map = compute_unet_weight_map(binary_mask, cache_path=str(cache_path))
+        # Build instance mask
+        instance_mask = build_instance_mask(masks_dir)
 
+        # Cache path must be unique PER IMAGE
+        image_id = Path(image_path).stem
+        cache_path = self.weight_cache_dir / f"{image_id}.npy"
+
+        weight_map = compute_unet_weight_map(instance_mask, cache_path=str(cache_path))
+
+        # Use binary mask for training target
+        binary_mask = (instance_mask > 0).astype(np.uint8)
+
+        # Apply transforms
         if self.transforms:
             image, mask_out, weight_map = self.transforms(
-                image, binary_mask, weight_map
+                image, instance_mask, weight_map
             )
         else:
             mask_out = binary_mask
