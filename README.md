@@ -27,3 +27,18 @@ cd into the folder and run 'uv run python main.py'
 2) Extract it to `data-science-bowl-2018/stage1_train` at the project root, so you have folders like `data-science-bowl-2018/stage1_train/<image_id>/{images,masks}`.  
 3) In `src/config.py`, set `DATASET_CHOICE = "data-science-bowl-2018"` and adjust `DSB2018_TRAIN_ROOT` if you placed the data elsewhere.  
 4) Run `python -m src.main` to start training on the Kaggle dataset using the existing U-Net pipeline, or `python -m src.train_2018` if you prefer the dedicated entrypoint.
+
+## Training on PhC-C2DH-U373
+
+To train the improved U-Net on PhC-C2DH-U373, run `python -m src.main`
+Unzip the dataset into 'data/PhC-C2DH-U373'
+In src/config.py, set DATASET_CHOICE = "phc-u373"
+Run uv run python -m src.main
+
+## Recommended System Requirements
+
+- Python 3.10+
+- Recommended: NVIDIA GPU with at least 6GB VRAM
+- Tested on: CUDA 12.1, PyTorch 2.3
+
+Training the PhC dataset takes ~10–15 minutes on an RTX 3060.
